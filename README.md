@@ -1,12 +1,72 @@
-The AutoQALLMs(AUTOQAGPT) is controlled by the main() function, which coordinates the entire framework from HTML extraction to test execution. This function manages the overall workflow, maintains data consistency, and handles errors at each stage.
+# AutoQALLMs
 
-The process begins by prompting the user to enter a website URL. The fetch_html() function retrieves the HTML content. If the URL is valid and the server responds correctly, the function returns the content as a BeautifulSoup object. Otherwise, error handling is triggered to stop or retry the process. The HTML is then parsed using the parse_html() function, which extracts key elements such as titles, headings, links, and images. These elements form the input for test generation.
+AutoQALLMs generates automated browser test scripts from a website URL using an LLM. The original local workflow is the comparison CLI in `AUTOQAGPT_COMPARE_LLM'S.py`: it downloads HTML, extracts testable elements, requests Selenium Python code, executes the generated script in Chrome, and appends execution metrics to the dataset.
 
-The parsed output is passed to the generate_selenium_code() function, where a detailed prompt is constructed and embedded directly in the code. This prompt is sent to the GPT-4 API along with the structured data. GPT-4 returns Selenium test code based on the instructions in the prompt.
+## Local CLI Workflow
 
-The raw output is refined through three post-processing steps. First, clean_selenium_code() removes unwanted text using regular expressions. Then, format_selenium_code() uses autopep8 to apply Python style formatting. Finally, remove_lines_after_quit() ensures the script ends cleanly after the browser is closed.
+Run these commands from the repository root:
 
-The cleaned and formatted script is saved as a .py file named generated-test.py. The execute_selenium_code() function is then called to launch the Chrome browser, run the test script, and log the results. Any runtime errors are caught and printed, allowing the framework to continue running. At the end, the terminal shows a summary of test performance, serving as a simple reporting method.
-This workflow demonstrates how the framework maintains tight integration between all components while preserving modular independence, thereby facilitating robustness and extensibility.
+```powershell
+cd "D:\workspace\Testes exploratórios automatizados por agentes inteligentes em ambientes web\AutoQALLMs"
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+Copy-Item .env.example .env
+```
 
-Demo Video Link= https://drive.google.com/file/d/11tUOwfY0b6du0wD-lhQRxpjzAB6pveqP/view?usp=sharing 
+Fill `.env` with the key for the selected model:
+
+```dotenv
+OPENAI_API_KEY=
+ANTHROPIC_KEY=
+XAI_API_KEY=
+GEMINI_API_KEY=
+GEMINI_MODEL=gemini-2.5-flash
+```
+
+Chrome must be installed locally. Start the original comparison workflow with:
+
+```powershell
+python ".\AUTOQAGPT_COMPARE_LLM'S.py"
+```
+
+The terminal asks for:
+
+1. A target website URL.
+2. A model choice: `gpt4`, `claude`, `grok`, or `gemini`.
+
+During the run the terminal and execution log show:
+
+1. URL and model used.
+2. HTML retrieval completion and response size.
+3. Extracted links, headings, images, forms, inputs, buttons, and selects.
+4. LLM generation start and elapsed time.
+5. A preview of the generated Selenium script.
+6. Selenium execution output and passed/failed totals.
+7. Paths of generated artifacts.
+
+## Generated Files
+
+Files are created relative to the directory where the CLI is started. When launched from the repository root, they are:
+
+| File | Behavior |
+| --- | --- |
+| `generated_test.py` | Latest generated Selenium Python test; overwritten on each successful generation. |
+| `training_dataset.json` | Accumulated execution summary and element fingerprints; appended after test execution. |
+| `logs/autoqallms_YYYYMMDD_HHMMSS.log` | Full terminal-oriented trace for one CLI run. |
+
+`generated_test.py`, `logs/`, `.env`, and `.venv/` are ignored by Git.
+
+## Application Layout
+
+- `AUTOQAGPT_COMPARE_LLM'S.py`: original local comparison flow with model selection, Selenium execution, dataset recording, and execution log.
+- `logger.py`: JSON dataset persistence and timestamped log writing.
+- `AUTOQAGPT.py`: earlier GPT-4-only CLI variant.
+- `backend/`: FastAPI generation API introduced later.
+- `frontend/`: React interface introduced later; its current code points to the hosted API rather than the local backend.
+
+## Notes
+
+- The CLI extracts server-returned HTML with `requests` and BeautifulSoup. Content rendered only after client-side JavaScript execution is not included in this extraction.
+- Generated test code comes from the selected provider and is executed locally. Only run it against websites and accounts you are authorized to test.
+- For a Google AI Studio key, set `GEMINI_API_KEY` locally and select `gemini`; the default model is `gemini-2.5-flash`.

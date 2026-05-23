@@ -3,11 +3,13 @@
 
 # Python virtual environment - too large for GitHub
 venv/
+.venv/
 
 # Auto-generated files
 __pycache__/
 *.pyc
 generated_test.py
+logs/
 
 # VS Code settings
 .vscode/

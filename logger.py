@@ -1,10 +1,31 @@
 import json
 import os
 from datetime import datetime
+from pathlib import Path
 
 
 # This is the file where all training data will be saved
 DATASET_FILE = "training_dataset.json"
+
+
+class ExecutionLogger:
+    """Mirrors CLI status messages into one timestamped local log file."""
+
+    def __init__(self, log_dir="logs", now=datetime.now, terminal_writer=print):
+        self.log_dir = Path(log_dir)
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = now().strftime("%Y%m%d_%H%M%S")
+        self.path = self.log_dir / f"autoqallms_{timestamp}.log"
+        sequence = 1
+        while self.path.exists():
+            self.path = self.log_dir / f"autoqallms_{timestamp}_{sequence}.log"
+            sequence += 1
+        self.terminal_writer = terminal_writer
+
+    def write(self, message=""):
+        self.terminal_writer(message)
+        with self.path.open("a", encoding="utf-8") as log_file:
+            log_file.write(f"{message}\n")
 
 
 def load_existing_data():
@@ -18,7 +39,7 @@ def load_existing_data():
     return []
 
 
-def save_record(record):
+def save_record(record, execution_logger=None):
     """
     Adds one new record to the dataset file.
     Each record = one website run.
@@ -29,7 +50,13 @@ def save_record(record):
     with open(DATASET_FILE, "w") as f:
         json.dump(all_data, f, indent=2)
 
-    print(f"\n[LOGGER] Record saved. Total records in dataset: {len(all_data)}")
+    message = f"\n[LOGGER] Record saved. Total records in dataset: {len(all_data)}"
+    if execution_logger:
+        execution_logger.write(message)
+    else:
+        print(message)
+
+    return Path(DATASET_FILE).resolve()
 
 
 def build_element_fingerprints(parsed_data):

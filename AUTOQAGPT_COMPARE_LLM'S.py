@@ -1,10 +1,12 @@
 import os
 import re
 import json
+import sys
 import time
 import requests
 import autopep8
-from logger import build_record, save_record
+from pathlib import Path
+from logger import ExecutionLogger, build_record, save_record
 from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -22,6 +24,8 @@ load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY", "")
 ANTHROPIC_KEY = os.getenv("ANTHROPIC_KEY", "")
 XAI_API_KEY = os.getenv("XAI_API_KEY", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 
 
@@ -188,6 +192,28 @@ def generate_with_grok(prompt):
         return None
 
 
+# Generate code using Gemini API from Google AI Studio
+
+def generate_with_gemini(prompt):
+    try:
+        endpoint = (
+            "https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{GEMINI_MODEL}:generateContent"
+        )
+        response = requests.post(
+            endpoint,
+            params={"key": GEMINI_API_KEY},
+            json={"contents": [{"parts": [{"text": prompt}]}]},
+            timeout=120,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        return payload["candidates"][0]["content"]["parts"][0]["text"].strip()
+    except Exception as e:
+        print(f"Gemini Error: {e}")
+        return None
+
+
 
 
 
@@ -226,8 +252,12 @@ def generate_selenium_code(url, parsed_data, model_choice="gpt4"):
         return generate_with_claude(prompt)
     elif model_choice == "grok":
         return generate_with_grok(prompt)
+    elif model_choice == "gemini":
+        return generate_with_gemini(prompt)
     else:
-        raise ValueError("Invalid model choice. Use 'gpt4', 'claude', or 'grok'.")
+        raise ValueError(
+            "Invalid model choice. Use 'gpt4', 'claude', 'grok', or 'gemini'."
+        )
 
 
 # Code cleanup and formatting
@@ -259,29 +289,37 @@ def setup_chrome():
     driver = webdriver.Chrome(options=options)
     return driver
 
-def execute_selenium_code(selenium_code):
+def execute_selenium_code(selenium_code, execution_log):
     cleaned = clean_selenium_code(selenium_code)
     formatted = format_selenium_code(cleaned)
     final = remove_lines_after_quit(formatted)
 
-    with open("generated_test.py", "w") as f:
+    generated_script_path = Path("generated_test.py").resolve()
+    with generated_script_path.open("w", encoding="utf-8") as f:
         f.write(final)
-    print("\n Selenium Test Script Saved as generated_test.py")
+    execution_log.write(
+        f"\n Selenium Test Script Saved as {generated_script_path}"
+    )
 
-    print("\n Running Selenium Tests...\n")
+    execution_log.write("\n Running Selenium Tests...\n")
 
     # Capture the output of the test run so we can count passes and fails
     import subprocess
     result = subprocess.run(
-        ["python", "generated_test.py"],
+        [sys.executable, "generated_test.py"],
         capture_output=True,
         text=True
     )
 
     # Print the output to console so you still see it as before
-    print(result.stdout)
+    execution_log.write(result.stdout or "[No standard output from generated test]")
     if result.stderr:
-        print("[STDERR]", result.stderr[:500])
+        execution_log.write(f"[STDERR] {result.stderr[:500]}")
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Generated Selenium script exited with code {result.returncode}."
+        )
 
     # Count how many tests passed and failed from the console output
     passed = result.stdout.count("Passed")
@@ -295,42 +333,66 @@ def execute_selenium_code(selenium_code):
 
 def main():
     url = input("Enter the URL to parse and test: ").strip()
-    model_choice = input("Select model (gpt4 / claude / grok): ").strip().lower()
+    model_choice = input(
+        "Select model (gpt4 / claude / grok / gemini): "
+    ).strip().lower()
+    execution_log = ExecutionLogger()
 
-    print("\n Fetching and Parsing HTML...")
-    soup = fetch_html(url)
-    parsed_data = parse_html(soup)
-    print(json.dumps(parsed_data, indent=2))
+    execution_log.write("\n AutoQALLMs Local Execution Started")
+    execution_log.write(f" URL: {url}")
+    execution_log.write(f" Model: {model_choice}")
+    execution_log.write(f" Log file: {execution_log.path.resolve()}")
 
-    print(f"\n Generating Selenium Code using {model_choice.upper()}...")
-    start_time = time.time()
-    selenium_code = generate_selenium_code(url, parsed_data, model_choice)
-    duration = time.time() - start_time
-    print(f"\n Generation Time: {duration:.2f} seconds")
-
-    if selenium_code:
-        print("\n--- Generated Code (preview) ---\n")
-        print(selenium_code[:800], "...\n")
-
-        # Start timing the execution
-        exec_start = time.time()
-        tests_passed, tests_failed = execute_selenium_code(selenium_code)
-        exec_duration = time.time() - exec_start
-
-        # Build and save the training record
-        record = build_record(
-            url=url,
-            model_used=model_choice,
-            parsed_data=parsed_data,
-            generation_time=duration,
-            execution_time=exec_duration,
-            tests_passed=tests_passed,
-            tests_failed=tests_failed
+    try:
+        execution_log.write("\n Fetching and Parsing HTML...")
+        soup = fetch_html(url)
+        execution_log.write(
+            f" HTML extracted successfully ({len(str(soup))} characters received)."
         )
-        save_record(record)
+        parsed_data = parse_html(soup)
+        execution_log.write("\n Extracted Elements:\n" + json.dumps(parsed_data, indent=2))
 
-    else:
-        print(" Failed to generate Selenium code.")
+        execution_log.write(f"\n Generating Selenium Code using {model_choice.upper()}...")
+        start_time = time.time()
+        selenium_code = generate_selenium_code(url, parsed_data, model_choice)
+        duration = time.time() - start_time
+        execution_log.write(f"\n Generation Time: {duration:.2f} seconds")
+
+        if selenium_code:
+            execution_log.write("\n--- Generated Code (preview) ---\n")
+            execution_log.write(selenium_code[:800] + " ...\n")
+
+            # Start timing the execution
+            exec_start = time.time()
+            tests_passed, tests_failed = execute_selenium_code(
+                selenium_code,
+                execution_log,
+            )
+            exec_duration = time.time() - exec_start
+
+            execution_log.write(
+                f"\n Test Results: {tests_passed} Passed / {tests_failed} Failed"
+            )
+
+            # Build and save the training record
+            record = build_record(
+                url=url,
+                model_used=model_choice,
+                parsed_data=parsed_data,
+                generation_time=duration,
+                execution_time=exec_duration,
+                tests_passed=tests_passed,
+                tests_failed=tests_failed
+            )
+            dataset_path = save_record(record, execution_log)
+            execution_log.write(f" Dataset file: {dataset_path}")
+        else:
+            execution_log.write(" Failed to generate Selenium code.")
+    except Exception as error:
+        execution_log.write(f"\n Execution failed: {error}")
+        raise
+    finally:
+        execution_log.write(f"\n Execution log saved at: {execution_log.path.resolve()}")
 
 if __name__ == "__main__":
     main()
